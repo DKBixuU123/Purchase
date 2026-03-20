@@ -4,7 +4,6 @@ import pandas as pd
 import streamlit as st
 import pandas as pd
 from datetime import date
-
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -54,23 +53,31 @@ if st.session_state['logged_in']:
     if user not in ["CEO / MD", "Sr. GM Commercial", "Finance Head"]:
         st.header("Step 1: Raise New RFQ")
         with st.form("rfq_form", clear_on_submit=True):
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns([2, 1, 1])
             with col1:
                 item_name = st.text_input("Item / Service Description")
-                qty = st.number_input("Required Quantity", min_value=1)
-                dept = st.selectbox("Requesting Department", ["PPC", "PE & Facility", "Hr & Admin", "Stores", "Engineering", "IT", "Production"])
             with col2:
+                qty = st.number_input("Quantity", min_value=0.1, step=0.1)
+            with col3:
+                # NEW UOM FIELD
+                uom = st.selectbox("UOM", ["Nos", "Kg", "Mtr", "Set", "Ltr", "Box", "Pkt", "Sq.Mtr"])
+                
+            col_a, col_b = st.columns(2)
+            with col_a:
+                dept = st.selectbox("Requesting Department", ["PPC", "PE & Facility", "Hr & Admin", "Stores", "Engineering", "IT", "Production"])
                 req_date = st.date_input("Required Date (Deadline)", min_value=date.today())
+            with col_b:
                 remarks = st.text_area("Detailed Remarks / Specs")
             
             uploaded_file = st.file_uploader("Upload Drawing/Specs", type=["pdf", "png", "jpg", "jpeg"])
             
             if st.form_submit_button("Submit RFQ"):
-                # Save details to the list
+                # Save details including UOM
                 new_rfq = {
                     "Date Raised": date.today().strftime("%d-%m-%Y"),
                     "Item": item_name,
                     "Qty": qty,
+                    "UOM": uom,
                     "Dept": dept,
                     "Target Date": req_date.strftime("%d-%m-%Y"),
                     "Remarks": remarks,
@@ -78,24 +85,27 @@ if st.session_state['logged_in']:
                     "Status": "Pending at Purchase"
                 }
                 st.session_state['rfq_list'].append(new_rfq)
-                st.success("✅ RFQ submitted and added to the dashboard below!")
+                st.success(f"✅ RFQ for {item_name} ({qty} {uom}) submitted successfully!")
 
-        # --- NEW DASHBOARD VIEW (Inside the same view) ---
+        # --- LIVE DASHBOARD VIEW ---
         st.divider()
-        st.header("📋 Your Submitted RFQ Dashboard")
+        st.header("📋 Submitted RFQ Status Dashboard")
         if st.session_state['rfq_list']:
+            # Showing newest first
             df_display = pd.DataFrame(st.session_state['rfq_list'])
-            st.dataframe(df_display, use_container_width=True)
+            st.dataframe(df_display.iloc[::-1], use_container_width=True)
         else:
-            st.info("No RFQs submitted yet. Fill the form above to see details here.")
+            st.info("No RFQs submitted in this session.")
 
     # STEP 3: COMPARISON (Visible to Purchaser & Seniors)
     if user in ["Purchaser", "Purchase HOD", "Sr. GM Commercial", "Finance Head", "CEO / MD"]:
         st.header("Step 3: Comparison Statement (CS)")
         cs_table = pd.DataFrame({
             "Vendor": ["Alpha Tech", "Beta Corp", "Gamma Ind."],
-            "Price (INR)": [5500, 4800, 5100], "Lead Time": ["15 Days", "7 Days", "10 Days"],
-            "Rating": ["⭐⭐⭐", "⭐⭐⭐⭐⭐", "⭐⭐⭐⭐"], "Rank": ["L3", "L1", "L2"]
+            "Price (INR)": [5500, 4800, 5100], 
+            "Lead Time": ["15 Days", "7 Days", "10 Days"],
+            "Terms": ["30 Days", "Advance", "15 Days"],
+            "Rank": ["L3", "L1", "L2"]
         })
         def highlight_l1(s):
             return ['background-color: #d1e7dd' if s.Rank == 'L1' else '' for _ in s]
@@ -103,9 +113,9 @@ if st.session_state['logged_in']:
 
         if user != "Purchaser":
             st.subheader("Step 5: Authorization")
-            c1, c2 = st.columns(4)
-            with c1: st.button("✅ Approve PR")
-            with c2: st.button("❌ Reject PR")
+            col_app, col_rej = st.columns([1, 5])
+            with col_app: st.button("✅ Approve")
+            with col_rej: st.button("❌ Reject")
 
 else:
     st.info("👈 Please enter your password in the sidebar to begin.")
