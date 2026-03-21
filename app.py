@@ -11,13 +11,13 @@ user_db = {
     "Sr. GM Commercial": "gm123", "Finance Head": "fin123", "CEO / MD": "ceo123"
 }
 
-# 3. DATA STORAGE (Note: This will reset on code updates until Google Sheets is linked)
+# 3. DATA STORAGE
 if 'rfq_master' not in st.session_state:
     st.session_state['rfq_master'] = []
 if 'quotes_master' not in st.session_state:
     st.session_state['quotes_master'] = {}
 
-# --- LOGIN LOGIC ---
+# --- LOGIN ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
@@ -42,7 +42,7 @@ if st.session_state['logged_in']:
     user = st.session_state['user']
     st.title(f"🚀 Procurement Portal")
     
-    # --- DASHBOARD (History) ---
+    # DASHBOARD
     st.header("📋 RFQ & PR Status Tracker")
     if st.session_state['rfq_master']:
         df_rfq = pd.DataFrame(st.session_state['rfq_master'])
@@ -52,7 +52,7 @@ if st.session_state['logged_in']:
     
     st.divider()
 
-    # --- PHASE 1: PPC / END USER (RFQ & PR) ---
+    # PHASE 1: PPC / END USER (RFQ & PR)
     if user == "End User / PPC":
         tab1, tab2 = st.tabs(["📝 Raise New RFQ", "📤 Raise Purchase Requisition (PR)"])
         
@@ -66,7 +66,7 @@ if st.session_state['logged_in']:
                 with r1: req_date = st.date_input("Required By")
                 with r2: remarks = st.text_area("Remarks")
                 
-                # RE-ADDED DOCUMENT UPLOAD
+                # DOCUMENT UPLOAD FOR RFQ
                 rfq_doc = st.file_uploader("Upload Specs/Drawing", type=['pdf','jpg','png'], key="rfq_up")
                 
                 if st.form_submit_button("Submit RFQ"):
@@ -77,7 +77,7 @@ if st.session_state['logged_in']:
                         "Required": req_date.strftime("%d-%m-%Y"), "Status": "Pending Quote",
                         "File": rfq_doc.name if rfq_doc else "No File"
                     })
-                    st.success(f"✅ {rfq_id} Raised! You can now raise another without logging out.")
+                    st.success(f"✅ {rfq_id} Submitted!")
                     st.rerun()
 
         with tab2:
@@ -90,18 +90,18 @@ if st.session_state['logged_in']:
                 
                 with st.form("pr_form"):
                     chosen_vendor = st.selectbox("Select Recommended Vendor", df_q['Supplier'].unique())
-                    justification = st.text_area("Justification for Selection")
+                    justification = st.text_area("Justification")
                     if st.form_submit_button("Submit PR for Approval"):
                         for r in st.session_state['rfq_master']:
                             if r['RFQ ID'] == sel_rfq:
                                 r['Status'] = "PR Pending Approval"
                                 r['Vendor'] = chosen_vendor
-                        st.success(f"PR for {sel_rfq} submitted to HOD!")
+                        st.success(f"PR for {sel_rfq} sent for Approval!")
                         st.rerun()
             else:
                 st.info("No Comparison Statements ready for PR.")
 
-    # --- PHASE 2: PURCHASER (Quotes & CS) ---
+    # PHASE 2: PURCHASER (Quotes & CS)
     if user == "Purchaser":
         st.header("📥 Purchaser: Arrange Supplier Quotations")
         pending_rfqs = [r['RFQ ID'] for r in st.session_state['rfq_master'] if r['Status'] == "Pending Quote"]
@@ -117,7 +117,7 @@ if st.session_state['logged_in']:
                 with v2: v_price = st.number_input("Unit Price", min_value=0.0)
                 with v3: v_disc = st.number_input("Discount %", min_value=0.0)
                 
-                # QUOTATION DOCUMENT UPLOAD
+                # DOCUMENT UPLOAD FOR QUOTE
                 q_doc = st.file_uploader("Upload Supplier Quote", type=['pdf','jpg','png'], key="q_up")
                 
                 if st.form_submit_button("Save Quote"):
@@ -126,10 +126,40 @@ if st.session_state['logged_in']:
                         "Supplier": v_name, "Rate": v_price, "Disc%": v_disc, 
                         "Net Price": v_price * (1 - v_disc/100), "File": q_doc.name if q_doc else "None"
                     })
+                    st.success(f"Quote for {v_name} saved. Form cleared for next.")
                     st.rerun()
             
             if sel_id in st.session_state['quotes_master']:
                 st.table(pd.DataFrame(st.session_state['quotes_master'][sel_id]))
                 if st.button("Finalize Comparison (Send to End User)"):
                     for r in st.session_state['rfq_master']:
-                        if r['RFQ ID'] == sel_id: r['Status'] = "
+                        if r['RFQ ID'] == sel_id: 
+                            r['Status'] = "CS Generated"
+                    st.success("CS Generated successfully!")
+                    st.rerun()
+        else:
+            st.info("No RFQs pending quotes.")
+
+    # PHASE 3: APPROVAL
+    if user in ["Purchase HOD", "Sr. GM Commercial", "Finance Head", "CEO / MD"]:
+        st.header("⚖️ PR Approval Portal")
+        to_approve = [r for r in st.session_state['rfq_master'] if r['Status'] == "PR Pending Approval"]
+        
+        if to_approve:
+            for req in to_approve:
+                with st.expander(f"Review PR: {req['RFQ ID']} - {req['Item']}"):
+                    st.write(f"**Vendor:** {req['Vendor']} | **Requested By:** {req['Dept']}")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button(f"✅ Approve {req['RFQ ID']}", key=f"a_{req['RFQ ID']}"):
+                            req['Status'] = "Approved (Ready for SAP B1)"
+                            st.rerun()
+                    with col2:
+                        if st.button(f"❌ Reject {req['RFQ ID']}", key=f"r_{req['RFQ ID']}"):
+                            req['Status'] = "Rejected"
+                            st.rerun()
+        else:
+            st.info("No PRs waiting for approval.")
+
+else:
+    st.info("👈 Please login from the sidebar.")
