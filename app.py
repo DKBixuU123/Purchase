@@ -1,30 +1,42 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
+import gspread
+from google.oauth2.service_account import Credentials
 
 # 1. PAGE CONFIG
 st.set_page_config(page_title="Procurement ERP Pro", layout="wide")
 
-# 2. USER ACCESS CONTROL
+# 2. GOOGLE SHEETS CONNECTION
+# PASTE YOUR URL HERE
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1Zks8dDcskV1EvEslYFDmPhXQodC3VHsL7r_VZBhCCl8/edit?gid=509050112#gid=509050112" 
+
+def get_gsheet():
+    try:
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        # Ensure your JSON key is in Streamlit Secrets as [gcp_service_account]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+        client = gspread.authorize(creds)
+        sheet = client.open_by_url(SHEET_URL)
+        return sheet
+    except Exception as e:
+        return None
+
+db = get_gsheet()
+
+# 3. USER ACCESS CONTROL
 user_db = {
     "End User / PPC": "ppc123", "Purchaser": "buy123", "Purchase HOD": "hod123",
     "Sr. GM Commercial": "gm123", "Finance Head": "fin123", "CEO / MD": "ceo123"
 }
 
-# 3. DATA STORAGE (Session State)
-if 'rfq_master' not in st.session_state:
-    st.session_state['rfq_master'] = []
-if 'quotes_master' not in st.session_state:
-    st.session_state['quotes_master'] = {}
-if 'show_rfq_form' not in st.session_state:
-    st.session_state['show_rfq_form'] = True
+# 4. SESSION STATE INITIALIZATION
+if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
+if 'show_rfq_form' not in st.session_state: st.session_state['show_rfq_form'] = True
 
 # --- LOGIN LOGIC ---
-if 'logged_in' not in st.session_state:
-    st.session_state['logged_in'] = False
-
-st.sidebar.title("🔐 Secure Login")
 if not st.session_state['logged_in']:
+    st.sidebar.title("🔐 Secure Login")
     role = st.sidebar.selectbox("Select Role", list(user_db.keys()))
     pwd = st.sidebar.text_input("Password", type="password")
     if st.sidebar.button("Login"):
@@ -40,102 +52,112 @@ else:
         st.rerun()
 
 # --- MAIN APP ---
-if st.session_state['logged_in']:
+if st.session_state['logged_in'] and db:
     user = st.session_state['user']
     st.title(f"🚀 Procurement Portal")
     
-    # DASHBOARD (Always shows all previous RFQs)
-    st.header("📋 RFQ Status Tracker")
-    if st.session_state['rfq_master']:
-        df_history = pd.DataFrame(st.session_state['rfq_master'])
-        st.table(df_history.iloc[::-1]) # Newest on top
+    # LOAD MASTER DATA FROM GOOGLE SHEETS
+    rfq_sheet = db.worksheet("RFQs")
+    all_rfqs = pd.DataFrame(rfq_sheet.get_all_records())
+    
+    # DASHBOARD
+    st.header("📋 RFQ & PR Status Tracker")
+    if not all_rfqs.empty:
+        st.table(all_rfqs.iloc[::-1])
     else:
-        st.info("No RFQs found in history.")
+        st.info("No records found in Google Sheets.")
     
     st.divider()
 
-    # PHASE 1: PPC / END USER (Raise Multiple RFQs)
+    # PHASE 1: PPC / END USER (Raise Multiple RFQs & PR)
     if user == "End User / PPC":
-        if st.session_state['show_rfq_form']:
-            st.header("📝 Step 1: Raise New RFQ")
-            with st.form("rfq_form", clear_on_submit=True):
-                c1, c2, c3 = st.columns([2, 1, 1])
-                with c1: item = st.text_input("Item Description")
-                with c2: qty = st.number_input("Qty", min_value=0.1)
-                with c3: uom = st.selectbox("UOM", ["Nos", "Kg", "Mtr", "Set", "Ltr"])
-                
-                r1, r2 = st.columns(2)
-                with r1: req_date = st.date_input("Required By")
-                with r2: remarks = st.text_area("Remarks")
-                
-                doc = st.file_uploader("Upload Specs/Drawing", type=['pdf','jpg','png'])
-                
-                if st.form_submit_button("Submit RFQ"):
-                    rfq_id = f"RFQ-{len(st.session_state['rfq_master']) + 101}"
-                    st.session_state['rfq_master'].append({
-                        "RFQ ID": rfq_id, "Date": date.today().strftime("%d-%m-%Y"),
-                        "Item": item, "Qty": qty, "UOM": uom, "Dept": user, 
-                        "Required": req_date.strftime("%d-%m-%Y"), "Status": "Pending Quote",
-                        "Attachment": doc.name if doc else "No File"
-                    })
-                    st.session_state['show_rfq_form'] = False # Hide form to show success
+        tab1, tab2 = st.tabs(["📝 Raise New RFQ", "📤 Raise PR"])
+        
+        with tab1:
+            if st.session_state['show_rfq_form']:
+                st.header("Step 1: Create RFQ")
+                with st.form("rfq_form", clear_on_submit=True):
+                    c1, c2, c3 = st.columns([2, 1, 1])
+                    with c1: item = st.text_input("Item Description")
+                    with c2: qty = st.number_input("Qty", min_value=0.1)
+                    with c3: uom = st.selectbox("UOM", ["Nos", "Kg", "Mtr", "Set", "Ltr"])
+                    
+                    r1, r2 = st.columns(2)
+                    with r1: req_date = st.date_input("Required By")
+                    with r2: remarks = st.text_area("Remarks")
+                    doc = st.file_uploader("Upload Specs", type=['pdf','jpg','png'])
+                    
+                    if st.form_submit_button("Submit RFQ"):
+                        new_id = f"RFQ-{101 + len(all_rfqs)}"
+                        new_row = [new_id, date.today().strftime("%d-%m-%Y"), item, qty, uom, user, 
+                                   req_date.strftime("%d-%m-%Y"), "Pending Quote", doc.name if doc else "No File"]
+                        rfq_sheet.append_row(new_row)
+                        st.session_state['show_rfq_form'] = False
+                        st.rerun()
+            else:
+                st.success("✅ RFQ Submitted Successfully to Google Sheets!")
+                if st.button("➕ Create Another RFQ"):
+                    st.session_state['show_rfq_form'] = True
                     st.rerun()
-        else:
-            st.success(f"✅ RFQ Submitted Successfully!")
-            if st.button("➕ Create Another RFQ"):
-                st.session_state['show_rfq_form'] = True
-                st.rerun()
 
-    # PHASE 2: PURCHASER (Auto-Pull Material Info & Clear Form)
+        with tab2:
+            # PR Section: Only show RFQs where CS is Generated
+            if not all_rfqs.empty:
+                cs_ready = all_rfqs[all_rfqs['Status'] == "CS Generated"]['RFQ ID'].tolist()
+                if cs_ready:
+                    sel_pr = st.selectbox("Select RFQ to Convert to PR", cs_ready)
+                    if st.button("Raise PR for Approval"):
+                        cell = rfq_sheet.find(sel_pr)
+                        rfq_sheet.update_cell(cell.row, 8, "PR Pending Approval")
+                        st.success(f"PR for {sel_pr} sent to HOD!")
+                        st.rerun()
+                else:
+                    st.info("No Comparison Statements ready for PR yet.")
+
+    # PHASE 2: PURCHASER (Add Quotes & Finalize CS)
     if user == "Purchaser":
         st.header("📥 Purchaser: Arrange Supplier Quotations")
-        pending_ids = [r['RFQ ID'] for r in st.session_state['rfq_master'] if r['Status'] == "Pending Quote"]
-        
-        if pending_ids:
-            sel_id = st.selectbox("Select Pending RFQ to Enter Quotes", pending_ids)
-            rfq_data = next(i for i in st.session_state['rfq_master'] if i["RFQ ID"] == sel_id)
+        if not all_rfqs.empty:
+            pending_ids = all_rfqs[all_rfqs['Status'] == "Pending Quote"]['RFQ ID'].tolist()
             
-            # AUTO-PULL DATA FROM THE RFQ
-            st.warning(f"📌 Working on: **{rfq_data['Item']}** ({rfq_data['Qty']} {rfq_data['UOM']})")
-            
-            with st.form("quote_form", clear_on_submit=True):
-                v1, v2, v3 = st.columns(3)
-                with v1: v_name = st.text_input("Supplier Name")
-                with v2: v_price = st.number_input("Unit Price", min_value=0.0)
-                with v3: v_disc = st.number_input("Discount %", min_value=0.0)
+            if pending_ids:
+                sel_id = st.selectbox("Select Pending RFQ to Enter Quotes", pending_ids)
+                rfq_data = all_rfqs[all_rfqs['RFQ ID'] == sel_id].iloc[0]
                 
-                t1, t2 = st.columns(2)
-                with t1: v_terms = st.text_input("Payment Terms")
-                with t2: v_lead = st.text_input("Lead Time")
+                st.warning(f"📌 Working on: **{rfq_data['Item']}** ({rfq_data['Qty']} {rfq_data['UOM']})")
                 
-                if st.form_submit_button("Save Supplier Quote"):
-                    if sel_id not in st.session_state['quotes_master']:
-                        st.session_state['quotes_master'][sel_id] = []
-                    
-                    net = v_price * (1 - v_disc/100)
-                    st.session_state['quotes_master'][sel_id].append({
-                        "Supplier": v_name, "Rate": v_price, "Disc%": v_disc, 
-                        "Net Price": net, "Payment": v_terms, "Lead Time": v_lead
-                    })
-                    st.success(f"Quote for {v_name} saved! Form ready for next supplier.")
+                with st.form("quote_form", clear_on_submit=True):
+                    v1, v2, v3 = st.columns(3)
+                    with v1: v_name = st.text_input("Supplier Name")
+                    with v2: v_price = st.number_input("Unit Price", min_value=0.0)
+                    with v3: v_disc = st.number_input("Discount %", min_value=0.0)
+                    if st.form_submit_button("Save Supplier Quote"):
+                        db.worksheet("Quotes").append_row([sel_id, v_name, v_price, v_disc, v_price * (1 - v_disc/100)])
+                        st.success(f"Quote for {v_name} saved!")
+                        st.rerun()
+
+                if st.button("Finalize Comparison (CS)"):
+                    cell = rfq_sheet.find(sel_id)
+                    rfq_sheet.update_cell(cell.row, 8, "CS Generated")
+                    st.success("Comparison Statement Generated! It is now visible to the End User.")
                     st.rerun()
+            else:
+                st.info("No pending RFQs found.")
 
-            if sel_id in st.session_state['quotes_master']:
-                st.subheader(f"Current Quotes for {sel_id}")
-                st.table(pd.DataFrame(st.session_state['quotes_master'][sel_id]))
-        else:
-            st.info("No RFQs are currently pending for quotes.")
-
-    # PHASE 3: COMPARISON & L1
-    if user in ["Purchaser", "Purchase HOD", "Sr. GM Commercial", "Finance Head", "CEO / MD"]:
-        st.divider()
-        st.header("📊 Final Comparison Statement (CS)")
-        if st.session_state['quotes_master']:
-            cs_id = st.selectbox("Select RFQ for Comparison", list(st.session_state['quotes_master'].keys()))
-            if st.button("Generate CS"):
-                df_cs = pd.DataFrame(st.session_state['quotes_master'][cs_id])
-                l1_val = df_cs['Net Price'].min()
-                st.table(df_cs.style.apply(lambda x: ['background: #d1e7dd; font-weight: bold' if x['Net Price'] == l1_val else '' for i in x], axis=1))
+    # PHASE 3: APPROVAL (HOD/Finance/CEO)
+    if user in ["Purchase HOD", "Sr. GM Commercial", "Finance Head", "CEO / MD"]:
+        st.header("⚖️ PR Approval Portal")
+        if not all_rfqs.empty:
+            to_approve = all_rfqs[all_rfqs['Status'] == "PR Pending Approval"]
+            if not to_approve.empty:
+                for index, row in to_approve.iterrows():
+                    with st.expander(f"Review PR: {row['RFQ ID']} - {row['Item']}"):
+                        if st.button(f"Approve {row['RFQ ID']}", key=f"app_{row['RFQ ID']}"):
+                            cell = rfq_sheet.find(row['RFQ ID'])
+                            rfq_sheet.update_cell(cell.row, 8, "Approved (Ready for SAP B1)")
+                            st.rerun()
+            else:
+                st.info("No PRs waiting for your approval.")
 
 else:
-    st.info("👈 Please login from the sidebar.")
+    st.warning("👈 Please login and check Google Sheet URL connection.")
