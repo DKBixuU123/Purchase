@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 
-# Page Setup
+# 1. PAGE CONFIG
 st.set_page_config(page_title="Procurement ERP Pro", layout="wide")
 
-# 1. USER DATABASE
+# 2. USER ACCESS CONTROL
 user_db = {
     "End User / PPC": "ppc123", "Purchaser": "buy123", "Purchase HOD": "hod123",
     "Sr. GM Commercial": "gm123", "Finance Head": "fin123", "CEO / MD": "ceo123",
@@ -13,7 +13,7 @@ user_db = {
     "Engineering": "eng123", "IT": "it123"
 }
 
-# --- DATA STORAGE ---
+# 3. PERMANENT-STYLE STORAGE (Session State)
 if 'rfq_master' not in st.session_state:
     st.session_state['rfq_master'] = []
 if 'quotes_master' not in st.session_state:
@@ -40,33 +40,32 @@ else:
         st.session_state.clear()
         st.rerun()
 
-# --- MAIN APP ---
+# --- MAIN SYSTEM ---
 if st.session_state['logged_in']:
     user = st.session_state['user']
+    st.title(f"🚀 Procurement Portal")
     
-    # --- DASHBOARD (History) ---
-    st.title(f"🚀 Procurement Dashboard")
-    st.subheader("📋 RFQ Status Tracker")
+    # DASHBOARD - Visible to All (Shows history)
+    st.subheader("📋 RFQ Status & History")
     if st.session_state['rfq_master']:
-        df_master = pd.DataFrame(st.session_state['rfq_master'])
-        st.dataframe(df_master, use_container_width=True)
+        st.dataframe(pd.DataFrame(st.session_state['rfq_master']), use_container_width=True)
     else:
-        st.info("No RFQs found.")
+        st.info("No RFQs found in history.")
     
     st.divider()
 
-    # --- PHASE 1: CREATE RFQ (Dept View) ---
+    # PHASE 1: CREATE RFQ (Dept View)
     if user not in ["Purchaser", "Purchase HOD", "Sr. GM Commercial", "Finance Head", "CEO / MD"]:
-        st.header("📝 Step 1: Raise New RFQ")
+        st.header("📝 Raise New RFQ")
         with st.form("rfq_form", clear_on_submit=True):
             c1, c2, c3 = st.columns([2, 1, 1])
             with c1: item = st.text_input("Item Description")
-            with c2: qty = st.number_input("Qty", min_value=0.1)
-            with c3: uom = st.selectbox("UOM", ["Nos", "Kg", "Mtr", "Set", "Ltr", "Box"])
+            with c2: qty = st.number_input("Qty", min_value=1.0)
+            with c3: uom = st.selectbox("UOM", ["Nos", "Kg", "Mtr", "Set", "Ltr"])
             
             r1, r2 = st.columns(2)
             with r1: req_date = st.date_input("Required By", min_value=date.today())
-            with r2: remarks = st.text_area("Special Instructions/Remarks")
+            with r2: remarks = st.text_area("Remarks")
             
             if st.form_submit_button("Submit RFQ"):
                 rfq_id = f"RFQ-{len(st.session_state['rfq_master']) + 101}"
@@ -75,73 +74,68 @@ if st.session_state['logged_in']:
                     "Item": item, "Qty": qty, "UOM": uom, "Dept": user, 
                     "Required Date": req_date.strftime("%d-%m-%Y"), "Status": "Pending Quote"
                 })
-                st.success(f"✅ {rfq_id} submitted!")
+                st.success(f"✅ {rfq_id} Saved!")
                 st.rerun()
 
-    # --- PHASE 2: PURCHASER ACTION ---
+    # PHASE 2: QUOTATION ENTRY (Purchaser View)
     if user == "Purchaser":
-        st.header("📥 Step 2: Arrange Quotations")
-        pending_rfqs = [r for r in st.session_state['rfq_master'] if r['Status'] == "Pending Quote"]
+        st.header("📥 Quotation Management")
+        rfq_ids = [r['RFQ ID'] for r in st.session_state['rfq_master']]
         
-        if pending_rfqs:
-            # Select RFQ
-            rfq_options = {r['RFQ ID']: r for r in pending_rfqs}
-            selected_id = st.selectbox("Select RFQ to add Quote", list(rfq_options.keys()))
-            curr_rfq = rfq_options[selected_id]
-
-            # 1. AUTO-FETCH DATA FROM RFQ
-            st.info(f"**Material:** {curr_rfq['Item']} | **Qty:** {curr_rfq['Qty']} | **UOM:** {curr_rfq['UOM']}")
-
-            with st.expander(f"Add Supplier Quote for {selected_id}", expanded=True):
-                with st.form("q_form", clear_on_submit=True):
-                    v1, v2 = st.columns(2)
-                    with v1: supplier = st.text_input("Supplier Name")
-                    with v2: rate = st.number_input("Unit Rate (Basic)", min_value=0.0)
+        if rfq_ids:
+            sel_id = st.selectbox("Select RFQ to add Quotes", rfq_ids)
+            # PULL DATA FROM RFQ
+            rfq_data = next(i for i in st.session_state['rfq_master'] if i["RFQ ID"] == sel_id)
+            
+            st.warning(f"📌 **Working on:** {rfq_data['Item']} ({rfq_data['Qty']} {rfq_data['UOM']})")
+            
+            with st.form("q_form", clear_on_submit=True):
+                v1, v2, v3 = st.columns(3)
+                with v1: v_name = st.text_input("Supplier Name")
+                with v2: v_price = st.number_input("Unit Price (Basic)", min_value=0.0)
+                with v3: v_disc = st.number_input("Discount %", min_value=0.0)
+                
+                t1, t2, t3 = st.columns(3)
+                with t1: v_terms = st.text_input("Payment Terms")
+                with t2: v_lead = st.text_input("Lead Time")
+                with t3: v_file = st.file_uploader("Upload Quote", type=['pdf', 'jpg', 'png'])
+                
+                if st.form_submit_button("➕ Add Supplier to List"):
+                    if sel_id not in st.session_state['quotes_master']:
+                        st.session_state['quotes_master'][sel_id] = []
                     
-                    d1, d2, d3 = st.columns(3)
-                    with d1: discount = st.number_input("Discount %", min_value=0.0)
-                    with d2: p_terms = st.text_input("Payment Terms")
-                    with d3: l_time = st.text_input("Lead Time")
-                    
-                    q_file = st.file_uploader("Upload Supplier Quote (PDF/JPG)", type=["pdf", "jpg", "png"])
-                    
-                    if st.form_submit_button("Save Quote Details"):
-                        if selected_id not in st.session_state['quotes_master']:
-                            st.session_state['quotes_master'][selected_id] = []
-                        
-                        net = rate * (1 - discount/100)
-                        st.session_state['quotes_master'][selected_id].append({
-                            "Supplier": supplier, "Basic Rate": rate, "Disc %": discount, 
-                            "Net Price": net, "Payment": p_terms, "Lead Time": l_time,
-                            "Doc": q_file.name if q_file else "No File"
-                        })
-                        st.success(f"Quote for {supplier} added!")
+                    net = v_price * (1 - v_disc/100)
+                    st.session_state['quotes_master'][sel_id].append({
+                        "Supplier": v_name, "Basic Price": v_price, "Disc%": v_disc, 
+                        "Net Price": net, "Payment": v_terms, "Lead Time": v_lead,
+                        "File": v_file.name if v_file else "None"
+                    })
+                    st.rerun()
 
-            # 2. SHOW ENTERED QUOTES BELOW FORM
-            if selected_id in st.session_state['quotes_master']:
-                st.subheader(f"Current Quotes for {selected_id}")
-                st.table(pd.DataFrame(st.session_state['quotes_master'][selected_id]))
-        else:
-            st.write("No pending RFQs.")
+            # SHOW RUNNING LIST OF SUPPLIERS FOR THIS RFQ
+            if sel_id in st.session_state['quotes_master']:
+                st.subheader(f"Current Supplier Quotes for {sel_id}")
+                st.table(pd.DataFrame(st.session_state['quotes_master'][sel_id]))
 
-    # --- PHASE 3: COMPARISON STATEMENT ---
+    # PHASE 3: COMPARISON & L1 (Purchaser & Approvers)
     if user in ["Purchaser", "Purchase HOD", "Sr. GM Commercial", "Finance Head", "CEO / MD"]:
-        st.header("📊 Step 3: Comparison Statement (CS)")
+        st.divider()
+        st.header("📊 Comparison Statement (CS)")
         available_ids = list(st.session_state['quotes_master'].keys())
         
         if available_ids:
-            cs_id = st.selectbox("Select RFQ for Comparison", available_ids)
-            if st.button("Generate CS & Indicate L1"):
+            cs_id = st.selectbox("Select RFQ for L1 Analysis:", available_ids)
+            if st.button("Generate Comparison Statement"):
                 df_cs = pd.DataFrame(st.session_state['quotes_master'][cs_id])
                 l1_val = df_cs['Net Price'].min()
                 
                 def highlight_l1(row):
-                    return ['background-color: #d1e7dd' if row['Net Price'] == l1_val else '' for _ in row]
+                    return ['background-color: #d1e7dd; font-weight: bold' if row['Net Price'] == l1_val else '' for _ in row]
                 
+                st.write(f"### Final Comparison for {cs_id}")
                 st.table(df_cs.style.apply(highlight_l1, axis=1))
-                st.success(f"L1 Supplier for {cs_id} highlighted in Green.")
+                st.success("🟢 L1 Vendor highlighted in Green.")
         else:
-            st.info("No quotes available to compare yet.")
-
+            st.info("Awaiting supplier quotations from the Purchaser.")
 else:
-    st.info("👈 Please login from the sidebar.")
+    st.info("👈 Please login to view and manage RFQs.")
